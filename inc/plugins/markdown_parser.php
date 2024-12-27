@@ -49,6 +49,12 @@ function parseMarkdown($text)
 // Hook into the parser to process the custom BBCode
 function markdown_parser_parse($message)
 {
+    global $parser;
+
+    if($parser instanceof postParser) { // should work for core, might not if plugins initiate their own parser using different variables
+        $parser->options['nl2br'] = false;
+    }
+
     // Look for the [md] BBCode and process it
     $pattern = "#\[md\](.*?)\[/md\]#si";
     $message = preg_replace_callback(
@@ -103,7 +109,7 @@ function markdown_parser_endparse($message)
         function ($matches) {
             $content = $matches[1];
 
-            $content = str_replace("<br />", "", $content);
+            //$content = str_replace("<br />", "", $content);
             return $content;
         },
         $message

@@ -46,52 +46,35 @@ function parseMarkdown($text)
     return $parsedown->text($text); // Convert Markdown to HTML
 }
 
+function custom_parser_object(array $options = [])
+{
+    static $parser;
+
+    require_once MYBB_ROOT . "inc/class_parser.php";
+
+    if (!($parser instanceof postParser)) {
+        $parser = new postParser();
+    }
+
+    return $parser;
+}
+
 // Hook into the parser to process the custom BBCode
 function markdown_parser_parse($message)
 {
     global $parser;
-
-    if($parser instanceof postParser) { // should work for core, might not if plugins initiate their own parser using different variables
-        $parser->options['nl2br'] = false;
-    }
+    global $parsing_content_cache;
 
     // Look for the [md] BBCode and process it
     $pattern = "#\[md\](.*?)\[/md\]#si";
     $message = preg_replace_callback(
         $pattern,
-        function ($matches) {
-            $content = $matches[1];
+        function ($matches) use(&$parsing_content_cache){
+            $id = 'markdown_cache_'.uniqid();
 
-            // Revert HTML anchor tags to handle only plain URL text
-            $content = convertHtmlUrlsToMarkdownUrls($content);
+            $parsing_content_cache[$id] = $matches[1];
 
-            // Fix the &gt; so Parsedown can properly parse blockquotes
-            $content = str_replace("&gt; ", "> ", $content);
-
-            // Fix any <br /> elements because they act like bad markdown
-            $content = str_replace("<br />", "\r\n", $content);
-
-            // Replace non-breaking characters with a regular space before passing to parseMarkdown
-            // https://stackoverflow.com/a/45856204
-            $content = preg_replace('/\xc2\xa0/', " ", $content);
-
-            // Parse Markdown within the tags
-            $content = parseMarkdown($content);
-
-            // Style the blockquotes
-            $content = str_replace(
-                "<blockquote>",
-                "<blockquote " . getBlockquoteClass() . ">",
-                $content
-            );
-
-            // Add target="_blank" to URLs
-            $content = setUrlsToOpenInNewTab($content);
-
-            // Add the tags back so the endparse method can remove all the extra <br>s that MyBB adds in later.
-            $content = "[md]" . $content . "[/md]";
-
-            return $content;
+            return "[md]{$id}[/md]";
         },
         $message
     );
@@ -102,14 +85,50 @@ function markdown_parser_parse($message)
 // Removes all the extra "<br />" tags MyBB's class_parser:parse_message method does.
 function markdown_parser_endparse($message)
 {
+    global $parser;
+    global $parsing_content_cache;
+
     // Look for the [md] BBCode and process it
     $pattern = "#\[md\](.*?)\[/md\]#si";
     $message = preg_replace_callback(
         $pattern,
-        function ($matches) {
-            $content = $matches[1];
+        function ($matches) use($parsing_content_cache, $parser) {
+            $id = $matches[1];
 
-            //$content = str_replace("<br />", "", $content);
+            $content = $parsing_content_cache[$id] ?? '';
+
+            if($content) {
+               $content = custom_parser_object()->parse_message(
+                   $content, array_merge(!empty($parser->options) ? $parser->options : [], ['nl2br' => false])
+               );
+
+                // Revert HTML anchor tags to handle only plain URL text
+                $content = convertHtmlUrlsToMarkdownUrls($content);
+
+                // Fix the &gt; so Parsedown can properly parse blockquotes
+                $content = str_replace("&gt; ", "> ", $content);
+
+                // Fix any <br /> elements because they act like bad markdown
+                $content = str_replace("<br />", "\r\n", $content);
+
+                // Replace non-breaking characters with a regular space before passing to parseMarkdown
+                // https://stackoverflow.com/a/45856204
+                $content = preg_replace('/\xc2\xa0/', " ", $content);
+
+                // Parse Markdown within the tags
+                $content = parseMarkdown($content);
+
+                // Style the blockquotes
+                $content = str_replace(
+                    "<blockquote>",
+                    "<blockquote " . getBlockquoteClass() . ">",
+                    $content
+                );
+
+                // Add target="_blank" to URLs
+                $content = setUrlsToOpenInNewTab($content);
+            }
+
             return $content;
         },
         $message
@@ -170,7 +189,7 @@ function markdown_parser_add_hooks()
     global $plugins;
 
     // Register the hook to parse the custom BBCode
-    $plugins->add_hook("parse_message", "markdown_parser_parse");
+    $plugins->add_hook("parse_message_start", "markdown_parser_parse");
     $plugins->add_hook("parse_message_end", "markdown_parser_endparse");
 }
 
